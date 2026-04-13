@@ -21,7 +21,9 @@ setup(
     entry_points={
     'console_scripts': [
         'cv_plot = my_cv_package.cv_plot:main',
+        'challenge1_node = my_cv_package.challenge1_node:main',
+        'calibration = my_cv_package.calibration:main',
     ],
+},
 
-    },
 )
