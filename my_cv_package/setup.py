@@ -21,6 +21,8 @@ setup(
     entry_points={
     'console_scripts': [
         'cv_plot = my_cv_package.cv_plot:main',
+        'line_follower_node = my_cv_package.line_follower_node:main',
+        'hsv_tuner_node     = my_cv_package.hsv_tuner_node:main',
     ],
 
     },

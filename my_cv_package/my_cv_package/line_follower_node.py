@@ -80,6 +80,15 @@ class LineFollowerNode(Node):
                                _desc('Pixel offset from tracked line into the lane. '
                                      'Set to ~half the lane width in pixels.'))
 
+        # ── Look-near zone ─────────────────────────────────────────────
+        # Fraction of the image height (from the bottom) used to compute the
+        # tracked-line centroid. Smaller → only the line directly in front of
+        # the robot is used → no early biting on curves, but less anticipation.
+        # 0.20 = bottom 20% of the image. Sensible range: 0.10 – 0.40.
+        self.declare_parameter('look_near_ratio', 0.20,
+                               _desc('Bottom-slice fraction for centroid '
+                                     '(0.10–0.40). Smaller = less anticipation.'))
+
         # ── Line detection ─────────────────────────────────────────────
         self.declare_parameter('min_line_area', 300,
                                _desc('Min pixels to consider a line detected'))
@@ -272,14 +281,25 @@ class LineFollowerNode(Node):
         ov[r_mask > 0] = (0, 0, 220)
         cv2.addWeighted(ov, 0.4, display, 0.6, 0, display)
 
+        # Look-near zone: horizontal line showing the top of the slice the
+        # centroid is computed from. Everything BELOW this line is what the
+        # robot is actually steering on right now.
+        ratio = float(self.get_parameter('look_near_ratio').value)
+        y_start = int(H * (1.0 - max(0.05, min(ratio, 1.0))))
+        cv2.line(display, (0, y_start), (W, y_start), (200, 200, 0), 1)
+        cv2.putText(display, 'look-near top', (6, y_start - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1)
+
         # Frame center line
         cv2.line(display, (W // 2, 0), (W // 2, H), (255, 255, 255), 1)
 
-        # Active-line centroid marker
+        # Active-line centroid marker — placed in the middle of the look-near
+        # zone vertically so it visually corresponds to where it was measured.
         color = (0, 0, 255) if self._active_line == 'red' else (0, 255, 0)
         if cx is not None:
-            cv2.circle(display, (int(cx), H // 2), 10, color, -1)
-            cv2.putText(display, 'cx', (int(cx) + 12, H // 2),
+            marker_y = (y_start + H) // 2
+            cv2.circle(display, (int(cx), marker_y), 10, color, -1)
+            cv2.putText(display, 'cx', (int(cx) + 12, marker_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
         # Target line
@@ -309,8 +329,26 @@ class LineFollowerNode(Node):
     # ── Helpers ────────────────────────────────────────────────────────
 
     def _centroid_x(self, mask, min_area):
-        M = cv2.moments(mask)
-        return (M['m10'] / M['m00']) if M['m00'] >= min_area else None
+        """
+        Centroid x computed from the BOTTOM SLICE of the mask only.
+
+        The full-mask centroid averages every pixel of the line — on a curve,
+        the upper portion of the line is already bending and drags the average
+        sideways, so the robot starts turning before it physically reaches the
+        bend ("biting" the inside of the curve).
+
+        Using only the bottom slice gives us the line position right in front
+        of the robot — physical present, not anticipated future.
+        """
+        H = mask.shape[0]
+        ratio = float(self.get_parameter('look_near_ratio').value)
+        ratio = max(0.05, min(ratio, 1.0))         # safety clamp
+        y_start = int(H * (1.0 - ratio))
+        bottom_slice = mask[y_start:, :]
+        M = cv2.moments(bottom_slice)
+        # Scale the area threshold proportionally to the slice size.
+        threshold = float(min_area) * ratio
+        return (M['m10'] / M['m00']) if M['m00'] >= threshold else None
 
     def _enhance_frame(self, frame):
         if not self.get_parameter('use_enhancement').value:
